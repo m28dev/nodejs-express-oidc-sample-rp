@@ -36,7 +36,6 @@ app.get('/auth', [
             metadata = json;
             next();
         }).catch(err => {
-            console.error(err);
             next(err);
         });
     },
@@ -64,61 +63,60 @@ app.get('/auth', [
     }
 ]);
 
-// TODO async
-app.get('/callback', async (req, res) => {
+app.get('/callback', async (req, res, next) => {
     const state = req.session.state;
     const nonce = req.session.nonce;
     req.session.state = null;
     req.session.nonce = null;
 
-    // Check State
-    if (!state || req.query.state !== state) {
-        return res.status(500).send({ error: 'State value did not match.' });
-    }
+    try {
+        // Check State
+        if (!state || req.query.state !== state) {
+            throw new Error('State value did not match.');
+        }
 
-    // Check Authentication Error Response
-    if (req.query.error) {
-        console.error({
-            error: req.query.error,
-            description: req.query.error_description,
-            uri: req.query.error_uri
+        // Check Authentication Error Response
+        if (req.query.error) {
+            console.error('Authentication Error:', {
+                error: req.query.error,
+                description: req.query.error_description,
+                uri: req.query.error_uri
+            });
+            throw new Error('Authentication Error');
+        }
+
+        // Token Request
+        const tokenEndpoint = metadata.token_endpoint;
+        const params = new URLSearchParams();
+        params.append('grant_type', 'authorization_code');
+        params.append('code', req.query.code);
+        params.append('redirect_uri', redirectUri);
+
+        const token = await fetch(tokenEndpoint, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString('base64')}`
+            },
+            body: params
+        }).then(async response => {
+            if (!response.ok) {
+                await response.json().then(errObj => { console.error('Token Request Error:', errObj) });
+                throw new Error('Token Request Error');
+            } else {
+                return response.json();
+            }
         });
-        return res.status(500).send({ error: 'Authentication Error', code: req.query.error });
+
+        // TODO: ID Token Validation
+        const idtokenString = Buffer.from(token.id_token.split('.')[1], 'base64').toString();
+        const idtoken = JSON.parse(idtokenString);
+
+        // TODO?
+        res.render('attr.ejs', { idtoken });
+
+    } catch (err) {
+        next(err);
     }
-
-    // Token Request
-    const tokenEndpoint = metadata.token_endpoint;
-
-    const params = new URLSearchParams();
-    params.append('grant_type', 'authorization_code');
-    params.append('code', req.query.code);
-    params.append('redirect_uri', redirectUri);
-
-    const token = await fetch(tokenEndpoint, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString('base64')}`
-        },
-        body: params
-    }).then(res => res.json());
-
-console.log(token);
-
-    // TODO トークンリクエストのエラーを拾う
-
-
-    // TODO ID Token Validation
-    const idtokenString = Buffer.from(token.id_token.split('.')[1], 'base64').toString();
-    const idtoken = JSON.parse(idtokenString);
-    /* TODO */
-    // issチェック
-    // audチェック
-    // expチェック
-    // iatチェック
-    // maxageチェック
-    // nonceチェック
-
-    res.render('attr.ejs', { idtoken });
 });
 
 // start server
