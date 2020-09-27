@@ -11,7 +11,7 @@ app.set('views', path.join(__dirname, 'views'));
 app.set('view engine', 'ejs');
 
 app.use(session({
-    secret: 'test1234',
+    secret: process.env.SESSION_SECRET || 'test1234',
     resave: false,
     saveUninitialized: false
 }));
@@ -19,7 +19,7 @@ app.use(session({
 app.use(express.static('./public'));
 
 // OIDC Settings
-const issuer = process.env.ISSUER || 'http://localhost:8180/';
+const issuer = process.env.ISSUER || 'http://localhost:8180';
 const clientId = process.env.CLIENT_ID || 'Input your ClientID';
 const clientSecret = process.env.CLIENT_SECRET || 'Input your secret';
 const redirectUri = 'http://localhost:3000/callback';
@@ -27,40 +27,63 @@ const redirectUri = 'http://localhost:3000/callback';
 let metadata = {};
 
 // routes
-app.get('/auth', async(req, res) => {
-    // OPの情報を取得
-    metadata = await fetch(`${issuer}/.well-known/openid-configuration`).then(response => response.json()); // TODO try-catch?
-    const authEndpoint = metadata.authorization_endpoint;
+app.get('/auth', [
+    (req, res, next) => {
+        // OPの情報を取得
+        fetch(`${issuer}/.well-known/openid-configuration`).then(response => {
+            return response.json();
+        }).then(json => {
+            metadata = json;
+            next();
+        }).catch(err => {
+            console.error(err);
+            next(err);
+        });
+    },
+    (req, res) => {
+        const authEndpoint = metadata.authorization_endpoint;
 
-    // Authentication Request
-    const responseType = 'code';
-    const scope = 'openid profile';
+        // Authentication Request
+        const scope = 'openid profile';
+        const responseType = 'code';
 
-    const state = randomstring.generate();
-    req.session.state = state;
+        const state = randomstring.generate();
+        req.session.state = state;
 
-    const nonce = randomstring.generate();
-    req.session.nonce = nonce;
+        const nonce = randomstring.generate();
+        req.session.nonce = nonce;
 
-    res.redirect(`${authEndpoint}?response_type=${responseType}&client_id=${clientId}&redirect_uri=${redirectUri}&scope=${scope}&state=${state}&nonce=${nonce}`);
-});
+        res.redirect(authEndpoint +
+            '?response_type=' + responseType +
+            '&scope=' + scope +
+            '&client_id=' + clientId +
+            '&state=' + state +
+            '&redirect_uri=' + redirectUri +
+            '&nonce=' + nonce
+        );
+    }
+]);
 
-// TODO ここをasyncにするのはエラーハンドリングに問題あり
+// TODO async
 app.get('/callback', async (req, res) => {
-    // stateチェック
-    if (req.query.state != req.session.state) {
+    const state = req.session.state;
+    const nonce = req.session.nonce;
+    req.session.state = null;
+    req.session.nonce = null;
+
+    // Check State
+    if (!state || req.query.state !== state) {
         return res.status(500).send({ error: 'State value did not match.' });
     }
 
-// TODO エラーになったらstateやnonceは消す
-
-    // エラーチェック
+    // Check Authentication Error Response
     if (req.query.error) {
-        return res.status(500).send({
+        console.error({
             error: req.query.error,
             description: req.query.error_description,
             uri: req.query.error_uri
         });
+        return res.status(500).send({ error: 'Authentication Error', code: req.query.error });
     }
 
     // Token Request
