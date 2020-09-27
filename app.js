@@ -15,18 +15,23 @@ app.use(session({
     resave: false,
     saveUninitialized: false
 }));
+
 app.use(express.static('./public'));
 
-/*
- * TODO: well-known を利用する
- */
-const authEndpoint = 'https://example.com/authorize';
-const clientId = process.env.CLIENT_ID || 'your client id';
-const clientSecret = process.env.CLIENT_SECRET || 'your client secret';
+// OIDC Settings
+const issuer = process.env.ISSUER || 'http://localhost:8180/';
+const clientId = process.env.CLIENT_ID || 'Input your ClientID';
+const clientSecret = process.env.CLIENT_SECRET || 'Input your secret';
 const redirectUri = 'http://localhost:3000/callback';
-const tokenEndpoint = 'https://example.com/token';
 
-app.get('/auth', (req, res) => {
+let metadata = {};
+
+// routes
+app.get('/auth', async(req, res) => {
+    // OPの情報を取得
+    metadata = await fetch(`${issuer}/.well-known/openid-configuration`).then(response => response.json()); // TODO try-catch?
+    const authEndpoint = metadata.authorization_endpoint;
+
     // Authentication Request
     const responseType = 'code';
     const scope = 'openid profile';
@@ -40,12 +45,14 @@ app.get('/auth', (req, res) => {
     res.redirect(`${authEndpoint}?response_type=${responseType}&client_id=${clientId}&redirect_uri=${redirectUri}&scope=${scope}&state=${state}&nonce=${nonce}`);
 });
 
-// ここをasyncにするとcatchが漏れる
+// TODO ここをasyncにするのはエラーハンドリングに問題あり
 app.get('/callback', async (req, res) => {
     // stateチェック
     if (req.query.state != req.session.state) {
         return res.status(500).send({ error: 'State value did not match.' });
     }
+
+// TODO エラーになったらstateやnonceは消す
 
     // エラーチェック
     if (req.query.error) {
@@ -57,6 +64,8 @@ app.get('/callback', async (req, res) => {
     }
 
     // Token Request
+    const tokenEndpoint = metadata.token_endpoint;
+
     const params = new URLSearchParams();
     params.append('grant_type', 'authorization_code');
     params.append('code', req.query.code);
@@ -89,6 +98,7 @@ console.log(token);
     res.render('attr.ejs', { idtoken });
 });
 
+// start server
 app.listen(port, () => {
-    console.log(`Example app listening at http://localhost:${port}`);
+    console.log(`listening at http://localhost:${port}`);
 });
