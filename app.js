@@ -6,6 +6,7 @@ const path = require('path');
 const session = require('express-session');
 const fetch = require('node-fetch');
 const randomstring = require("randomstring");
+const rs = require('jsrsasign');
 
 app.set('views', path.join(__dirname, 'views'));
 app.set('view engine', 'ejs');
@@ -24,6 +25,7 @@ const clientId = process.env.CLIENT_ID || 'Input your ClientID';
 const clientSecret = process.env.CLIENT_SECRET || 'Input your secret';
 const redirectUri = 'http://localhost:3000/callback';
 
+const algWhiteList = ["RS256"];
 let metadata = {};
 
 // routes
@@ -107,11 +109,46 @@ app.get('/callback', async (req, res, next) => {
             }
         });
 
-        // TODO: ID Token Validation
+        /*
+         * ID Token Validation
+         * https://openid.net/specs/openid-connect-core-1_0.html#IDTokenValidation
+         */
+        try {
+            // デコードする
+            const decodedJwt = rs.KJUR.jws.JWS.parse(token.id_token);
+
+            /* 意図したIssuer(iss)か */
+            /* Audience(aud)とClientIDは一致しているか */
+            /* TODO: azp */
+
+            /* IDトークンの署名検証 */
+            // JWKより対応する鍵を取得
+            const jwkset = await fetch(metadata.jwks_uri).then(response => response.json());
+            const jwk = jwkset.keys.find(el => el.kid === decodedJwt.headerObj.kid);
+            const keyObj = rs.KEYUTIL.getKey(jwk);
+
+            // 意図した署名アルゴリズムかどうかもここでチェック
+            const isValid = rs.KJUR.jws.JWS.verify(token.id_token, keyObj, algWhiteList);
+            // 署名検証
+            if (!isValid) throw new Error('Invalid ID Token');
+
+            /* 有効期限(exp)確認 */
+            /* 発行から5分以上経ったトークンは無効とする（iatのチェック） */
+            /* nonceが一致するか */
+            /* TODO: acr */
+            /* TODO: auth_time 20時間くらい？ */
+        } catch (err) {
+            throw err;
+        }
+
         const idtokenString = Buffer.from(token.id_token.split('.')[1], 'base64').toString();
         const idtoken = JSON.parse(idtokenString);
 
-        // TODO?
+        //console.log(idtokenString);
+        //console.log(token);
+        //console.log(metadata);
+
+        // TODO: session + redirect
         res.render('attr.ejs', { idtoken });
 
     } catch (err) {
