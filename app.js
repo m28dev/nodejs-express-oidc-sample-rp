@@ -113,47 +113,47 @@ app.get('/callback', async (req, res, next) => {
          * ID Token Validation
          * https://openid.net/specs/openid-connect-core-1_0.html#IDTokenValidation
          */
-        try {
-            // デコードする
-            const decodedJwt = rs.KJUR.jws.JWS.parse(token.id_token);
 
-            /* 意図したIssuer(iss)か */
-            /* Audience(aud)とClientIDは一致しているか */
-            /* TODO: azp */
+        // デコードする
+        const decodedJwt = rs.KJUR.jws.JWS.parse(token.id_token);
 
-            /* IDトークンの署名検証 */
-            // JWKより対応する鍵を取得
-            const jwkset = await fetch(metadata.jwks_uri).then(response => response.json());
-            const jwk = jwkset.keys.find(el => el.kid === decodedJwt.headerObj.kid);
-            const keyObj = rs.KEYUTIL.getKey(jwk);
+        /* 意図したIssuer(iss)か */
+        /* Audience(aud)とClientIDは一致しているか */
+        /* TODO: azp */
 
-            // 意図した署名アルゴリズムかどうかもここでチェック
-            const isValid = rs.KJUR.jws.JWS.verify(token.id_token, keyObj, algWhiteList);
-            // 署名検証
-            if (!isValid) throw new Error('Invalid ID Token');
+        /* IDトークンの署名検証 */
+        // JWKより対応する鍵を取得
+        const jwkset = await fetch(metadata.jwks_uri).then(response => response.json());
+        const jwk = jwkset.keys.find(el => el.kid === decodedJwt.headerObj.kid);
+        const keyObj = rs.KEYUTIL.getKey(jwk);
 
-            /* 有効期限(exp)確認 */
-            /* 発行から5分以上経ったトークンは無効とする（iatのチェック） */
-            /* nonceが一致するか */
-            /* TODO: acr */
-            /* TODO: auth_time 20時間くらい？ */
-        } catch (err) {
-            throw err;
-        }
+        // 意図した署名アルゴリズムかどうかもここでチェック
+        const isValid = rs.KJUR.jws.JWS.verify(token.id_token, keyObj, algWhiteList);
+        // 署名検証
+        if (!isValid) throw new Error('Invalid ID Token');
 
-        const idtokenString = Buffer.from(token.id_token.split('.')[1], 'base64').toString();
-        const idtoken = JSON.parse(idtokenString);
+        /* 有効期限(exp)確認 */
+        /* 発行から5分以上経ったトークンは無効とする（iatのチェック） */
+        /* nonceが一致するか */
+        /* TODO: acr */
+        /* TODO: auth_time 20時間くらい？ */
 
-        //console.log(idtokenString);
-        //console.log(token);
-        //console.log(metadata);
-
-        // TODO: session + redirect
-        res.render('attr.ejs', { idtoken });
+        req.session.idtoken = decodedJwt.payloadObj;
+        res.redirect('/attr'); // Claims表示のページを見せる
 
     } catch (err) {
         next(err);
     }
+});
+
+app.get('/attr', (req, res) => {
+    // ログインしていない
+    if (!req.session.idtoken) {
+        res.status(403).end();
+        return;
+    }
+
+    res.render('attr.ejs', { idtoken: req.session.idtoken });
 });
 
 // start server
